@@ -1,0 +1,150 @@
+---
+title: "HR Case Study"
+author: "Linh Nguyen"
+date: "2023-03-25"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+hr.data <- read.csv("~/Downloads/hr-data-v2.csv")
+```
+
+
+```{r pressure, echo=FALSE}
+set.seed(123)
+random.vec <- runif(nrow(hr.data))
+training.vec <- ifelse(random.vec < 0.7, 1, 0)
+train.data <- hr.data[training.vec==1,]
+test.data <- hr.data[training.vec==0,]
+```
+
+```{r}
+logit.model <- glm(attrition ~ ., data = train.data, family = "binomial")
+summary(logit.model)
+```
+
+```{r}
+library(stargazer)
+stargazer(logit.model, type="text")
+```
+The variables in the model that are statistically significant at p < 0.01 are: environ.satisfaction, job.satisfaction, work.life.balance, age,  business.travelTravel_Frequently, job.roleResearch Director, num.companies.worked, total.working.yrs, trainings.last.year, years.since.promotion, years.current.mgr, avg.hours.worked. Thus, these are the most important variables that are likely to cause an employee's attrition. 
+
+environ.satisfaction, job.satisfaction, work.life.balance, age, total.working.yrs, trainings.last.year, years.current.mgr variables have negative coefficients in the model result. This suggests that these variables are important factors that positively affect employees' experiences in the company since, on average, when the values of these variables increase, it is less likely that the employees will leave the company (negative coefficients).
+
+If employees are very dissatisfied with the company environment, the job, and the work-life balance situation of the company, they are likely to leave the company. 
+If employees are not in their young ages, have many years of working, have a lot of trainings last year, and have a lot of years working with the current managers, they are less likely to leave the company. 
+
+On the other hand, business.travelTravel_Frequently, job.roleResearch Director, num.companies.worked, years.since.promotion, avg.hours.worked variables have positive coefficients in the model result. This indicates high values of these variables affect the employees' in a negative way, since on average, when the values of these variables increase, it is more likely that the employees will leave the company (positive coefficients).
+
+If the job requires them to travel frequently, their job roles are Research Director, they have worked for a lot of companies, there have been many years since their last job promotion, and the number of hours they have to work is high, they are more likely to leave the company. 
+
+```{r}
+test.probs <- predict(logit.model, newdata = test.data, type = "response")
+test.pred <- ifelse(test.probs > 0.5, 1, 0)
+```
+
+```{r}
+library(caret)
+conf.mat <- confusionMatrix(factor(test.pred, levels = c(0,1)), factor(test.data$attrition, levels = c(0,1)))
+accuracy <- conf.mat$overall[1]
+sensitivity <- conf.mat$byClass[1]
+precision <- conf.mat$byClass[5]
+accuracy 
+sensitivity
+precision
+```
+The logistic regression model has an accuracy rate of 85.78%, sensitivity rate of 97.9%, and precision rate of 87%. Overall, the model is likely to do well in predicting which employees will leave the company. 
+
+85.78% of the predictions made by the model are correct. 
+
+The model is really good at capturing as many employees leaving the company as possible, as 97.9% of the number of employees predicted to leave the company actually left the company. This model is good when we do not care too much about sometimes we pull in some employees who will not leave the company. 
+
+The ratio of the number of employees who left the company to the number of employees predicted to leave the company is 87%. The model is not as precise as it is sensitive, but overall it is still a good model. 
+
+```{r}
+library(ranger)
+rf.model <- ranger(attrition ~ ., data = train.data, importance = "permutation", probability = TRUE)
+summary(rf.model)
+```
+
+```{r}
+test.probs <- predict(rf.model, data = test.data)$predictions[,2]
+test.pred <- ifelse(test.probs > 0.5, 1, 0)
+```
+
+```{r}
+conf.mat <- confusionMatrix(factor(test.pred, levels = c(0,1)), factor(test.data$attrition, levels = c(0,1)))
+
+accuracy <- conf.mat$overall[1]
+sensitivity <- conf.mat$byClass[1]
+precision <- conf.mat$byClass[5]
+
+accuracy
+sensitivity
+precision
+```
+This model performs better than the logistic regression model in this case, as all the accuracy, sensitivity, and precision rate by the random forest model are higher than those of the logistic regression model. Overall, 95.57% of the random forest's predictions are correct. Sensitivity is 1, which means the random forest model picked up everyone who actually left the company. Everyone who actually left the company was predicted as leaving the company by the model. It has 95.04% precision, meaning less than 5% of the employees predicted as leaving by the model actually stayed at the company. However, if we care more about not missing anyone who will leave the company and tolerate that sometimes we may pick up people who actually will stay, then this model is perform very well because sensitivity is 1. Accuracy and precision are also high, indicating a good model. 
+
+```{r}
+write.csv(test.data, file = 'hr-predictions.csv', row.names = FALSE)
+```
+
+```{r}
+library(cluster)
+library(dplyr)
+cat_vars <- select(hr.data, business.travel, department, education.field, gender, job.role)
+cat_matrix <- model.matrix(~.-1, data = cat_vars)
+hr.data_new <- cbind(hr.data[, !(names(hr.data) %in% c('business.travel', 'department', 'education.field', 'gender', 'job.role'))], cat_matrix)
+kmeans.data <- scale(hr.data_new)
+wss <- c()
+for (i in 1:10) {
+  kmeans.model <- kmeans(kmeans.data, centers = i, nstart = 10)
+  wss[i] <- kmeans.model$tot.withinss
+}
+plot(1:10, wss, type = "b", xlab = "Number of clusters (k)", ylab = "Within-cluster sum of squares")
+```
+
+The elbow point of the plot when the within-cluster sum of squares starts to decrease more slowly is 4. This point represents the point of diminishing returns in terms of improving the clustering solution, and additional clusters do not offer substantial improvements. Thus, 4 is the optimal number of clusters to use for the K-means clustering method in this case.  
+
+```{r}
+kmeans.model <- kmeans(kmeans.data, centers = 4, nstart = 10)
+kmeans.labels <- kmeans.model$cluster
+hr.data$cluster <- kmeans.labels
+```
+
+```{r}
+table(kmeans.labels)
+```
+
+```{r}
+library(dplyr)
+kmeans.data_df <- as.data.frame(kmeans.data)
+kmeans.data_df$cluster <- kmeans.labels
+cluster_means <- kmeans.data_df %>%
+  group_by(cluster) %>%
+  summarize_all(mean)
+```
+
+Looking at the average values of the attributes in the different clusters of employees, we can see some information about different groups of employees. Cluster 1 has 777 employees. These employees generally have high working environment satisfaction, good work-life balance, high age, low job levels, high total years of working, high total years at the company, low number of companies they have worked at, long time since their last promotion, long time with their current manager. Employees in this cluster are most likely to stay at the company, as the average value of attrition for this cluster is the lowest among the clusters. These employees seem to be loyal employees who are older and have worked with the companies and their managers for a long time. They generally do not have high-leveled jobs, but they are satisfied with their position and the company's working environment. 
+
+Cluster 2 has 1902 employees. These employees generally are the newest employees in the company with the least years at the company, the least years with current managers, young age, a short distance from home, low company environment satisfaction, low job satisfaction, low work-life balance, high level of education, considerably high job level, average number of companies they have worked at, low performance ratings, low total working years, received the most training in the last year, are newly promoted. The employees in this cluster are the second most likely group of employees to leave the company, as their average attrition value is the second highest. These employees seem to be young employees who are newly hired by the company. They have worked at other companies, and they do not mind job hopping or changing companies. Their jobs are considerably high-leveled, and they have a high level of education, but they are not fully satisfied with their jobs and the companies. They may want to leave the company for a better job or working environment. 
+
+Cluster 3 has 1048 employees. These employees generally have a young age, high job satisfaction, good work-life balance, high job levels, and high education levels. However, the working environment satisfaction is low, the annual income is low, the number of companies they have worked at is low, the total number of working years is low, and their number of working hours is low. These also seem to be the young employees who are newly hired by the company, but they are more satisfied with their current jobs and they haven't had many worked experiences at other companies or anywhere. They think their jobs are high-leveled, and they don't need to work many hours and have good work-life balance. They don't seem to be frequent job-hoppers as they did not work with many companies before. These employees are the second most likely type of employees to stay at the company.
+
+Cluster 4 has 573 employees. These employees generally have high job satisfaction, high performance rating, high annual income, and a high percentage of salary rise. However, they have low work-life balance, low environment satisfaction, high distance from job to home, a high number of companies they have worked for, low training received last year, and a high number of working hours. They have average age, the average total number of working years, average job levels, and average years at the company. These employees seem to be employees who are several years in their careers and are having stable careers. However, they may feel burned out or bored at their jobs, and they have to work considerably a lot of hours and have a low work-life balance. They do not stay at the company for too long to have a very loyal bond with the company, and they seem to not learn a lot of new things from their jobs anymore given the lower training received. Since they have decent working experiences and job levels, they will likely want to switch to companies where they can learn new things and have a better work-life balance. These are the employee group that are most likely to leave the company. 
+
+Overall, the company can use both the logistic regression model and the random forest model to predict which employees will leave the company. The random forest model does better at predicting which employees leave the company as the accuracy, precision, and sensitivity rates are all higher than those of the logistic regression model. The sensitivity rate of the random forest model is particularly high, so it is not likely to miss anyone who actually leaves the company when predicting.
+
+The company should also consider the results of the logistic regression and K-means clustering models to understand more about their employees and which factors lead to employee attrition. Factors such as environment satisfaction, job satisfaction, work-life balance, and the amount of training they received last year are factors that the company needs to work on to increase and improve as employees tend to consider these factors the most when making decisions about whether to leave the company. High values of these factors will likely encourage employees to stay at the companies. 
+
+The company should also pay attention to the employees' number of hours worked, the amount of travel required for the job, and the number of years since their last promotion and work on and try to decrease the values of those factors as they are important factors that contribute to employees' attrition too. Working many hours a day, traveling too frequently for the jobs, and waiting many years for their promotion will likely discourage the employees, making them want to leave the company. 
+
+The company should also try to improve the employees' loyalty to the company as their total years of working and their total years with the managers are also important factors that differentiate who may or may not leave the company. If they work long at the company and with their current managers, they are more likely to leave the company. Likewise, the number of companies they worked at is also a statistically significant variable, and the more companies they have worked at, the more likely they will leave the companies. Thus, besides working on factors to improve employee satisfaction, developing strong bonds with the employees is also essential to prevent employee attrition.
+
